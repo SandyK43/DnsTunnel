@@ -67,55 +67,77 @@ def load_json_log(log_path: str) -> pd.DataFrame:
 
 
 def generate_sample_data(num_samples: int = 1000) -> pd.DataFrame:
-    """Generate sample baseline DNS data for testing."""
+    """Generate sample baseline DNS data for testing with high diversity."""
     logger.info(f"Generating {num_samples} sample DNS records")
-    
+
     import random
-    
-    # Common legitimate domains
-    domains = [
-        "www.google.com",
-        "www.facebook.com",
-        "www.youtube.com",
-        "www.amazon.com",
-        "www.wikipedia.org",
-        "www.twitter.com",
-        "api.github.com",
-        "stackoverflow.com",
-        "www.linkedin.com",
-        "mail.google.com",
-        "drive.google.com",
-        "docs.google.com",
-        "www.reddit.com",
-        "www.netflix.com",
-        "www.microsoft.com",
-        "www.apple.com",
-        "www.cloudflare.com",
-        "www.mozilla.org",
-        "www.ubuntu.com",
-        "www.python.org",
+    import string
+
+    # Common legitimate domains (40% of traffic)
+    common_domains = [
+        "www.google.com", "google.com", "youtube.com", "www.youtube.com",
+        "facebook.com", "www.facebook.com", "amazon.com", "www.amazon.com",
+        "mail.google.com", "drive.google.com", "docs.google.com",
+        "api.github.com", "github.com", "www.wikipedia.org",
+        "stackoverflow.com", "www.reddit.com"
     ]
-    
-    # Generate subdomains variations
-    subdomains = ["www", "api", "cdn", "static", "mail", "ftp", "dev", "staging"]
-    
+
+    # Cloud/CDN services (15% of traffic)
+    cloud_services = [
+        "s3.amazonaws.com", "cloudfront.net", "azureedge.net",
+        "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "unpkg.com",
+        "fonts.googleapis.com", "ajax.googleapis.com", "gstatic.com",
+        "doubleclick.net", "googletagmanager.com", "analytics.google.com"
+    ]
+
+    # Corporate/internal patterns (20% of traffic)
+    corporate_prefixes = ["mail", "webmail", "portal", "intranet", "vpn", "gitlab", "jenkins",
+                          "confluence", "jira", "wiki", "docs", "api", "app", "dev", "staging"]
+    corporate_bases = ["company.com", "corp.local", "internal.net", "enterprise.io",
+                       "business.org", "office365.com"]
+
+    # Various TLDs for diversity (15% of traffic)
+    tlds = ["com", "org", "net", "edu", "gov", "co.uk", "io", "ai", "dev", "app"]
+    short_domains = ["cnn", "bbc", "msn", "espn", "imdb", "imgur", "twitch"]
+
+    # Subdomains with numbers/IDs (10% of traffic)
+    numbered_patterns = ["server{}", "node{}", "api-{}", "cdn{}", "cache{}",
+                         "lb{}", "web{}", "app{}", "db{}"]
+
     records = []
-    
+
     for i in range(num_samples):
-        # Mix direct domains and subdomain variations
-        if random.random() < 0.7:
-            query = random.choice(domains)
+        dice = random.random()
+
+        if dice < 0.40:
+            # Common domains
+            query = random.choice(common_domains)
+        elif dice < 0.55:
+            # Cloud services
+            query = random.choice(cloud_services)
+        elif dice < 0.75:
+            # Corporate/internal
+            prefix = random.choice(corporate_prefixes)
+            base = random.choice(corporate_bases)
+            query = f"{prefix}.{base}"
+        elif dice < 0.90:
+            # Short domains with various TLDs
+            domain = random.choice(short_domains)
+            tld = random.choice(tlds)
+            query = f"{domain}.{tld}"
         else:
-            subdomain = random.choice(subdomains)
-            base = random.choice(domains).replace("www.", "")
-            query = f"{subdomain}.{base}"
-        
+            # Numbered/ID-based subdomains
+            pattern = random.choice(numbered_patterns)
+            num = random.randint(1, 99)
+            base = random.choice(["example.com", "service.net", "cloud.io"])
+            query = f"{pattern.format(num)}.{base}"
+
         record = {
             'query': query,
-            'client_ip': f"192.168.1.{random.randint(1, 254)}"
+            'client_ip': f"10.0.{random.randint(0, 255)}.{random.randint(1, 254)}"
         }
         records.append(record)
-    
+
     return pd.DataFrame(records)
 
 

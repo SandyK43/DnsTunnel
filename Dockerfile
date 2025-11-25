@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY agents/ ./agents/
 COPY api/ ./api/
 COPY scripts/ ./scripts/
+COPY demo/ ./demo/
 COPY config.yaml .
 
 # Create directories for models and data

@@ -48,22 +48,29 @@ docker-compose exec api python demo/simulate_attack.py --type full
 
 ## 📊 View Results
 
-1. **API Documentation**: http://localhost:8000/docs
+1. **🎯 Interactive Demo Dashboard**: http://localhost:8501
+   - **RECOMMENDED**: Best way to see the system in action!
+   - Launch DNS tunnel attacks with one click
+   - Watch real-time detection
+   - View analytics and visualizations
+   - No configuration needed!
+
+2. **API Documentation**: http://localhost:8000/docs
    - Interactive API testing
-   
-2. **Grafana Dashboard**: http://localhost:3000
+
+3. **Grafana Dashboard**: http://localhost:3000
    - Username: `admin`
    - Password: `admin123`
    - Dashboard: "DNS Tunneling Detection Dashboard"
-   
-3. **Prometheus Metrics**: http://localhost:9090
 
-4. **Get System Stats**:
+4. **Prometheus Metrics**: http://localhost:9090
+
+5. **Get System Stats**:
    ```bash
    curl http://localhost:8000/api/v1/stats | jq
    ```
 
-5. **List Alerts**:
+6. **List Alerts**:
    ```bash
    curl http://localhost:8000/api/v1/alerts | jq
    ```

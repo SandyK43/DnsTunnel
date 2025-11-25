@@ -140,6 +140,23 @@ services:
       - dns-tunnel-net
     restart: unless-stopped
 
+  # Interactive Demo Dashboard
+  demo:
+    build: .
+    container_name: dns-tunnel-demo
+    command: streamlit run demo/streamlit_dashboard.py --server.port=8501 --server.address=0.0.0.0
+    environment:
+      - API_BASE_URL=http://api:8000/api/v1
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./demo:/app/demo
+    depends_on:
+      - api
+    networks:
+      - dns-tunnel-net
+    restart: unless-stopped
+
 networks:
   dns-tunnel-net:
     driver: bridge

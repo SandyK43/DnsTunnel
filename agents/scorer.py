@@ -30,8 +30,8 @@ class AnomalyScorer:
     def __init__(
         self,
         model_path: Optional[str] = None,
-        threshold_suspicious: float = 0.6,
-        threshold_high: float = 0.8
+        threshold_suspicious: float = 0.70,
+        threshold_high: float = 0.85
     ):
         """
         Args:
@@ -42,6 +42,7 @@ class AnomalyScorer:
         self.model: Optional[IsolationForest] = None
         self.threshold_suspicious = threshold_suspicious
         self.threshold_high = threshold_high
+        self.baseline_scores = None  # Store baseline for normalization
         self.feature_names = [
             'len_q',
             'entropy',
@@ -54,7 +55,7 @@ class AnomalyScorer:
             'avg_entropy',
             'max_entropy'
         ]
-        
+
         if model_path and os.path.exists(model_path):
             self.load_model(model_path)
         else:
@@ -73,38 +74,81 @@ class AnomalyScorer:
         logger.info("Created default Isolation Forest model")
     
     def load_model(self, model_path: str):
-        """Load trained model from disk."""
+        """Load trained model and baseline scores from disk."""
         try:
             with open(model_path, 'rb') as f:
-                self.model = pickle.load(f)
+                model_data = pickle.load(f)
+
+            # Handle both old and new format
+            if isinstance(model_data, dict):
+                self.model = model_data['model']
+                baseline = model_data.get('baseline_scores')
+
+                # Handle old format (array) vs new format (dict)
+                if baseline is not None and isinstance(baseline, np.ndarray):
+                    # Convert old array format to new dict format
+                    self.baseline_scores = {
+                        'min': float(np.min(baseline)),
+                        'max': float(np.max(baseline)),
+                        'mean': float(np.mean(baseline)),
+                        'std': float(np.std(baseline))
+                    }
+                    logger.info("Converted old baseline format to new dict format")
+                else:
+                    self.baseline_scores = baseline
+
+                self.threshold_suspicious = model_data.get('threshold_suspicious', self.threshold_suspicious)
+                self.threshold_high = model_data.get('threshold_high', self.threshold_high)
+            else:
+                # Old format: just the model
+                self.model = model_data
+                self.baseline_scores = None
+
             logger.info(f"Loaded model from {model_path}")
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             self.create_default_model()
     
     def save_model(self, model_path: str):
-        """Save model to disk."""
+        """Save model and baseline scores to disk."""
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        model_data = {
+            'model': self.model,
+            'baseline_scores': self.baseline_scores,
+            'threshold_suspicious': self.threshold_suspicious,
+            'threshold_high': self.threshold_high
+        }
         with open(model_path, 'wb') as f:
-            pickle.dump(self.model, f)
+            pickle.dump(model_data, f)
         logger.info(f"Saved model to {model_path}")
     
     def train(self, features_df: pd.DataFrame):
         """
         Train the Isolation Forest model on baseline (benign) data.
-        
+
         Args:
             features_df: DataFrame with feature columns
         """
         if self.model is None:
             self.create_default_model()
-        
+
         # Select feature columns in correct order
         X = features_df[self.feature_names].values
-        
+
         # Train model
         self.model.fit(X)
+
+        # Store baseline scores for normalization (store as dict with min/max)
+        baseline_raw = self.model.decision_function(X)
+        self.baseline_scores = {
+            'min': float(np.min(baseline_raw)),
+            'max': float(np.max(baseline_raw)),
+            'mean': float(np.mean(baseline_raw)),
+            'std': float(np.std(baseline_raw))
+        }
+
         logger.info(f"Trained model on {len(features_df)} samples")
+        logger.info(f"Baseline score range: [{self.baseline_scores['min']:.4f}, {self.baseline_scores['max']:.4f}]")
     
     def score(self, features: Dict[str, float]) -> Tuple[float, Severity]:
         """
@@ -123,13 +167,27 @@ class AnomalyScorer:
         # Prepare features in correct order
         X = np.array([[features[name] for name in self.feature_names]])
         
-        # Get anomaly score (more negative = more anomalous)
-        # Isolation Forest returns -1 for outliers, 1 for inliers
-        anomaly_score_raw = self.model.score_samples(X)[0]
-        
-        # Convert to 0-1 range (higher = more anomalous)
-        # Normalize using typical range of [-0.5, 0.5]
-        anomaly_score = 1 / (1 + np.exp(anomaly_score_raw))
+        # Get anomaly score
+        # decision_function: positive = normal (inlier), negative = anomaly (outlier)
+        anomaly_score_raw = self.model.decision_function(X)[0]
+
+        # Min-max normalization with inversion using baseline
+        if self.baseline_scores is not None and isinstance(self.baseline_scores, dict):
+            # Normalize to 0-1 range, inverted so high score = anomalous
+            baseline_min = self.baseline_scores['min']
+            baseline_max = self.baseline_scores['max']
+            baseline_range = baseline_max - baseline_min
+
+            if baseline_range > 0:
+                # Invert: (max - score) so that low raw score → high anomaly score
+                anomaly_score = (baseline_max - anomaly_score_raw) / baseline_range
+                # Clip to 0-1 range
+                anomaly_score = np.clip(anomaly_score, 0.0, 1.0)
+            else:
+                anomaly_score = 0.5
+        else:
+            # Fallback: use sigmoid
+            anomaly_score = 1 / (1 + np.exp(5 * anomaly_score_raw))
         
         # Determine severity
         severity = self._determine_severity(anomaly_score)
@@ -156,10 +214,25 @@ class AnomalyScorer:
         X = features_df[self.feature_names].values
         
         # Get anomaly scores
-        anomaly_scores_raw = self.model.score_samples(X)
-        
-        # Normalize to 0-1 range
-        anomaly_scores = 1 / (1 + np.exp(anomaly_scores_raw))
+        anomaly_scores_raw = self.model.decision_function(X)
+
+        # Min-max normalization with inversion
+        if self.baseline_scores is not None and isinstance(self.baseline_scores, dict):
+            # Normalize to 0-1 range, inverted so high score = anomalous
+            baseline_min = self.baseline_scores['min']
+            baseline_max = self.baseline_scores['max']
+            baseline_range = baseline_max - baseline_min
+
+            if baseline_range > 0:
+                # Invert: (max - score) so that low raw score → high anomaly score
+                anomaly_scores = (baseline_max - anomaly_scores_raw) / baseline_range
+                # Clip to 0-1 range
+                anomaly_scores = np.clip(anomaly_scores, 0.0, 1.0)
+            else:
+                anomaly_scores = np.full(len(anomaly_scores_raw), 0.5)
+        else:
+            # Fallback: use sigmoid
+            anomaly_scores = 1 / (1 + np.exp(5 * anomaly_scores_raw))
         
         # Add to dataframe
         features_df['anomaly_score'] = anomaly_scores

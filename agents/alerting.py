@@ -87,9 +87,10 @@ class AlertingAgent:
     
     def _load_email_config(self) -> Dict:
         """Load email configuration from environment."""
+        smtp_port = os.getenv('EMAIL_SMTP_PORT', '587')
         return {
-            'smtp_host': os.getenv('EMAIL_SMTP_HOST', 'smtp.gmail.com'),
-            'smtp_port': int(os.getenv('EMAIL_SMTP_PORT', '587')),
+            'smtp_host': os.getenv('EMAIL_SMTP_HOST') or 'smtp.gmail.com',
+            'smtp_port': int(smtp_port) if smtp_port else 587,
             'from_addr': os.getenv('EMAIL_FROM', ''),
             'to_addr': os.getenv('EMAIL_TO', ''),
             'username': os.getenv('EMAIL_USERNAME', ''),
