@@ -1,0 +1,53 @@
+application:
+  name: "DNS Tunneling Detection Service"
+  version: "1.0.0"
+  environment: "production"
+
+model:
+  type: "IsolationForest"
+  n_estimators: 200
+  contamination: 0.01
+  random_state: 42
+  max_samples: "auto"
+  
+features:
+  - len_q              # Query length
+  - entropy            # Shannon entropy
+  - num_labels         # Number of domain labels
+  - max_label_len      # Maximum label length
+  - digits_ratio       # Ratio of digits
+  - non_alnum_ratio    # Ratio of non-alphanumeric
+  - qps                # Queries per second
+  - unique_subdomains  # Unique subdomain count
+  - avg_entropy        # Average entropy in window
+  - max_entropy        # Maximum entropy in window
+
+severity_thresholds:
+  normal: 0.0
+  suspicious: 0.6
+  high: 0.8
+
+alerting:
+  channels:
+    - slack
+    - email
+  throttle_seconds: 300  # Don't re-alert same domain for 5 min
+  min_score_to_alert: 0.6
+  
+response:
+  auto_block_threshold: 0.8
+  quarantine_duration_minutes: 60
+  require_manual_approval: true
+
+dashboard:
+  refresh_interval: 10  # seconds
+  retention_days: 30
+  
+logging:
+  level: "INFO"
+  format: "json"
+  output:
+    - console
+    - file
+  file_path: "/var/log/dns-tunnel-detection.log"
+

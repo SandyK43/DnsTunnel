@@ -1,0 +1,152 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: dns-tunnel-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dns_tunnel_db}
+      POSTGRES_USER: ${POSTGRES_USER:-dnsadmin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dnsadmin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dns-tunnel-net
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: dns-tunnel-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dns-tunnel-net
+
+  # Main API Service
+  api:
+    build: .
+    container_name: dns-tunnel-api
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-dns_tunnel_db}
+      - POSTGRES_USER=${POSTGRES_USER:-dnsadmin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_PATH=/app/models/isolation_forest.pkl
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - TEAMS_WEBHOOK_URL=${TEAMS_WEBHOOK_URL}
+      - EMAIL_SMTP_HOST=${EMAIL_SMTP_HOST}
+      - EMAIL_SMTP_PORT=${EMAIL_SMTP_PORT}
+      - EMAIL_FROM=${EMAIL_FROM}
+      - EMAIL_TO=${EMAIL_TO}
+      - EMAIL_USERNAME=${EMAIL_USERNAME}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - JIRA_URL=${JIRA_URL}
+      - JIRA_USERNAME=${JIRA_USERNAME}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+      - JIRA_PROJECT_KEY=${JIRA_PROJECT_KEY:-SEC}
+      - ENABLE_AUTO_RESPONSE=${ENABLE_AUTO_RESPONSE:-false}
+      - ANOMALY_THRESHOLD_SUSPICIOUS=${ANOMALY_THRESHOLD_SUSPICIOUS:-0.6}
+      - ANOMALY_THRESHOLD_HIGH=${ANOMALY_THRESHOLD_HIGH:-0.8}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - dns-tunnel-net
+    restart: unless-stopped
+
+  # Log Collector Service
+  collector:
+    build: .
+    container_name: dns-tunnel-collector
+    command: python -m agents.collector
+    environment:
+      - ZEEK_LOG_PATH=${ZEEK_LOG_PATH:-/app/data/dns.log}
+      - API_ENDPOINT=http://api:8000/api/v1/dns/analyze
+    volumes:
+      - ./data:/app/data
+      - ${ZEEK_LOG_PATH:-/var/log/zeek}:/var/log/zeek:ro
+    depends_on:
+      - api
+    networks:
+      - dns-tunnel-net
+    restart: unless-stopped
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: dns-tunnel-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin123}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-piechart-panel
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - postgres
+    networks:
+      - dns-tunnel-net
+    restart: unless-stopped
+
+  # Prometheus (optional - for metrics)
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: dns-tunnel-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - dns-tunnel-net
+    restart: unless-stopped
+
+networks:
+  dns-tunnel-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
+  prometheus_data:
+

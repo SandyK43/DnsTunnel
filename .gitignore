@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Models
+models/*.pkl
+!models/.gitkeep
+
+# Data
+data/*.log
+data/*.csv
+!data/.gitkeep
+
+# Reports
+reports/*.pdf
+!reports/.gitkeep
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+._*
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Grafana
+grafana/data/
+
