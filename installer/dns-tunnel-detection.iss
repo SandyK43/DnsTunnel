@@ -179,6 +179,18 @@ begin
   ConfigPage.Values[1] := '8000';
 end;
 
+{ Helper function to validate float string }
+function IsValidFloat(Value: String; var FloatValue: Extended): Boolean;
+begin
+  Result := False;
+  try
+    FloatValue := StrToFloat(Value);
+    Result := True;
+  except
+    Result := False;
+  end;
+end;
+
 { Validate configuration inputs }
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
@@ -190,7 +202,7 @@ begin
   // Validate threshold page
   if CurPageID = ThresholdPage.ID then
   begin
-    if not TryStrToFloat(ThresholdPage.Values[0], ThresholdSusp) or
+    if not IsValidFloat(ThresholdPage.Values[0], ThresholdSusp) or
        (ThresholdSusp < 0.0) or (ThresholdSusp > 1.0) then
     begin
       MsgBox('Suspicious threshold must be between 0.0 and 1.0', mbError, MB_OK);
@@ -198,7 +210,7 @@ begin
       Exit;
     end;
 
-    if not TryStrToFloat(ThresholdPage.Values[1], ThresholdHigh) or
+    if not IsValidFloat(ThresholdPage.Values[1], ThresholdHigh) or
        (ThresholdHigh < 0.0) or (ThresholdHigh > 1.0) then
     begin
       MsgBox('High threshold must be between 0.0 and 1.0', mbError, MB_OK);
@@ -217,9 +229,16 @@ begin
   // Validate config page
   if CurPageID = ConfigPage.ID then
   begin
-    if not TryStrToInt(ConfigPage.Values[1], Port) or (Port < 1) or (Port > 65535) then
-    begin
-      MsgBox('Port must be between 1 and 65535', mbError, MB_OK);
+    try
+      Port := StrToInt(ConfigPage.Values[1]);
+      if (Port < 1) or (Port > 65535) then
+      begin
+        MsgBox('Port must be between 1 and 65535', mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+    except
+      MsgBox('Port must be a valid number', mbError, MB_OK);
       Result := False;
       Exit;
     end;
@@ -435,6 +454,8 @@ end;
 
 { Post-install tasks }
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
