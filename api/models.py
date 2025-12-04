@@ -86,27 +86,52 @@ class Alert(Base):
 class ResponseAction(Base):
     """Response action execution record."""
     __tablename__ = "response_actions"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
     alert_id = Column(Integer, nullable=False, index=True)
-    
+
     action_type = Column(String, nullable=False)  # block_ip, quarantine, etc.
     target = Column(String, nullable=False)  # IP or domain
     status = Column(String, nullable=False)  # pending, success, failed
-    
+
     # Approval workflow
     requires_approval = Column(Boolean, default=False)
     approved = Column(Boolean, default=False)
     approved_at = Column(DateTime, nullable=True)
     approved_by = Column(String, nullable=True)
-    
+
     # Execution details
     executed_at = Column(DateTime, nullable=True)
     duration_minutes = Column(Integer, nullable=True)
     error_message = Column(String, nullable=True)
-    
+
     details = Column(JSON)
+
+
+class AlertFeedback(Base):
+    """Analyst feedback on alerts for adaptive threshold tuning."""
+    __tablename__ = "alert_feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    alert_id = Column(Integer, nullable=False, index=True)
+
+    # Feedback details
+    is_false_positive = Column(Boolean, nullable=False)  # True if FP, False if TP
+    analyst = Column(String, nullable=False)
+    notes = Column(String, nullable=True)
+
+    # Alert details at time of feedback
+    anomaly_score = Column(Float, nullable=False)
+    severity = Column(String, nullable=False)
+    domain = Column(String)
+    client_ip = Column(String)
+
+    __table_args__ = (
+        Index('idx_feedback_alert', 'alert_id'),
+        Index('idx_feedback_timestamp', 'timestamp'),
+    )
 
 
 # Pydantic Models for API
@@ -247,4 +272,46 @@ class HealthResponse(BaseModel):
     model_loaded: bool
     database_connected: bool
     timestamp: datetime
+
+
+class AlertFeedbackRequest(BaseModel):
+    """Request model for analyst feedback on an alert."""
+    alert_id: int = Field(..., description="ID of the alert")
+    is_false_positive: bool = Field(..., description="True if this is a false positive")
+    analyst: str = Field(..., description="Username of analyst providing feedback")
+    notes: Optional[str] = Field(None, description="Optional notes about the feedback")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "alert_id": 123,
+                "is_false_positive": True,
+                "analyst": "john.doe",
+                "notes": "Benign CDN behavior, not tunneling"
+            }
+        }
+
+
+class AlertFeedbackResponse(BaseModel):
+    """Response model for alert feedback."""
+    id: int
+    timestamp: datetime
+    alert_id: int
+    is_false_positive: bool
+    analyst: str
+    notes: Optional[str]
+    anomaly_score: float
+    severity: str
+
+    class Config:
+        from_attributes = True
+
+
+class AdaptiveThresholdStatus(BaseModel):
+    """Status of adaptive thresholds."""
+    current_thresholds: dict
+    performance: dict
+    adjustment_stats: dict
+    recent_changes: list[dict]
+    feedback_summary: dict
 

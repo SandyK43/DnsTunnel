@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agents.feature_extractor import FeatureExtractor
 from agents.scorer import AnomalyScorer
-from agents.alerting import AlertManager
+from agents.alerting import AlertingAgent
 
 # Configuration
 MODEL_DIR = Path("/app/models")
@@ -361,7 +361,7 @@ def send_notification(report_path, stats, validation_results):
     passed_tests = sum(1 for r in validation_results if r['passed'])
     total_tests = len(validation_results)
 
-    alerting = AlertManager()
+    alerting = AlertingAgent()
 
     message = f"""
 🤖 **Automated Model Retraining Complete**

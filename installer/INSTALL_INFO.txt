@@ -1,0 +1,61 @@
+DNS Tunnel Detection Service
+Enterprise-Grade Security Solution
+========================================
+
+Thank you for choosing DNS Tunnel Detection Service!
+
+SYSTEM REQUIREMENTS:
+--------------------
+- Windows 10 or Windows Server 2016 (or newer)
+- Python 3.11 or higher (must be installed first!)
+- 2GB RAM minimum
+- 1GB disk space
+- Administrator privileges
+
+BEFORE YOU CONTINUE:
+--------------------
+1. Make sure Python 3.11+ is installed
+   Download from: https://www.python.org/downloads/
+
+2. During Python installation, check:
+   ✓ "Add Python to PATH"
+   ✓ "Install pip"
+
+3. You will need Administrator rights to install the Windows Service
+
+WHAT THIS INSTALLER WILL DO:
+-----------------------------
+1. Install application files to Program Files
+2. Guide you through configuration wizard:
+   - Detection thresholds
+   - Database selection (SQLite or PostgreSQL)
+   - Alert notifications (Slack, Email, JIRA)
+   - API settings
+3. Install Python dependencies automatically
+4. Train initial ML detection model
+5. Install as Windows Service (optional)
+6. Create Start Menu shortcuts
+
+INSTALLATION TIME:
+------------------
+Typical installation takes 3-5 minutes:
+- File installation: 30 seconds
+- Configuration wizard: 1 minute
+- Python dependencies: 1-2 minutes
+- Model training: 30-60 seconds
+- Service setup: 30 seconds
+
+AFTER INSTALLATION:
+-------------------
+The service will be accessible at:
+- API Documentation: http://localhost:8000/docs
+- Demo Dashboard: http://localhost:8501 (if installed)
+- Configuration: C:\Program Files\DNSTunnelDetection\config.yaml
+
+GETTING HELP:
+-------------
+- Documentation: Included in installation
+- Quick Start Guide: See QUICK_START.md
+- GitHub Issues: https://github.com/SandyK43/DnsTunnel/issues
+
+Press Next to continue with installation.

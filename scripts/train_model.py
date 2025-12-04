@@ -54,15 +54,54 @@ def load_zeek_log(log_path: str) -> pd.DataFrame:
 def load_json_log(log_path: str) -> pd.DataFrame:
     """Load JSON log file (one record per line)."""
     logger.info(f"Loading JSON log from: {log_path}")
-    
+
     df = pd.read_json(log_path, lines=True)
-    
+
     # Ensure required columns
     if 'query' not in df.columns or 'client_ip' not in df.columns:
         raise ValueError("JSON log must contain 'query' and 'client_ip' fields")
-    
+
     logger.info(f"Loaded {len(df)} DNS records")
-    
+
+    return df
+
+
+def load_bind_log(log_path: str) -> pd.DataFrame:
+    """Load and parse Bind9 query log file."""
+    logger.info(f"Loading Bind9 log from: {log_path}")
+
+    import re
+
+    records = []
+
+    # Bind9 query log format:
+    # client @0x7f8b4c001f30 192.168.1.100#52847 (www.example.com): query: www.example.com IN A + (192.168.1.1)
+    # OR
+    # queries: info: client 192.168.1.100#52847: query: www.example.com IN A + (192.168.1.1)
+
+    query_pattern = re.compile(
+        r'client\s+(?:@[^\s]+\s+)?'  # Optional object pointer
+        r'([\d\.]+)#\d+.*?'           # IP address
+        r'query:\s+([^\s]+)\s+'       # Query domain
+    )
+
+    with open(log_path, 'r') as f:
+        for line in f:
+            match = query_pattern.search(line)
+            if match:
+                client_ip = match.group(1)
+                query = match.group(2)
+
+                # Filter out localhost and empty queries
+                if query and client_ip and client_ip != '127.0.0.1':
+                    records.append({
+                        'query': query,
+                        'client_ip': client_ip
+                    })
+
+    df = pd.DataFrame(records)
+    logger.info(f"Loaded {len(df)} DNS records")
+
     return df
 
 
@@ -201,7 +240,7 @@ def main():
     parser.add_argument(
         '--format',
         type=str,
-        choices=['zeek', 'json', 'sample'],
+        choices=['zeek', 'bind', 'json', 'sample'],
         default='zeek',
         help='Input log format (default: zeek)'
     )
@@ -232,6 +271,8 @@ def main():
         df = generate_sample_data(args.num_samples)
     elif args.format == 'zeek':
         df = load_zeek_log(args.input)
+    elif args.format == 'bind':
+        df = load_bind_log(args.input)
     elif args.format == 'json':
         df = load_json_log(args.input)
     else:

@@ -15,10 +15,11 @@ from sqlalchemy import func, desc
 from loguru import logger
 
 from api.models import (
-    DNSQuery, Alert, ResponseAction as ResponseActionModel,
+    DNSQuery, Alert, ResponseAction as ResponseActionModel, AlertFeedback,
     DNSQueryRequest, DNSQueryResponse, BatchAnalysisRequest,
     AlertResponse, AlertListResponse, StatsResponse,
-    ResponseActionRequest, HealthResponse
+    ResponseActionRequest, HealthResponse,
+    AlertFeedbackRequest, AlertFeedbackResponse, AdaptiveThresholdStatus
 )
 from api.database import get_db, init_db, test_connection
 from agents.feature_extractor import FeatureExtractor
@@ -33,40 +34,78 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
     logger.info("Starting DNS Tunneling Detection Service")
-    
+
     # Initialize database
     init_db()
-    
+
+    # Check if adaptive thresholds are enabled
+    adaptive_enabled = os.getenv('ADAPTIVE_THRESHOLDS_ENABLED', 'true').lower() == 'true'
+
+    if adaptive_enabled:
+        from agents.adaptive_thresholds import AdaptiveThresholdManager
+
+        # Initialize adaptive threshold manager
+        app.state.adaptive_threshold_manager = AdaptiveThresholdManager(
+            initial_suspicious=float(os.getenv('ANOMALY_THRESHOLD_SUSPICIOUS', '0.70')),
+            initial_high=float(os.getenv('ANOMALY_THRESHOLD_HIGH', '0.85')),
+            target_fp_rate=float(os.getenv('TARGET_FP_RATE', '0.03')),
+            max_fp_rate=float(os.getenv('MAX_FP_RATE', '0.10')),
+            adjustment_increment=float(os.getenv('THRESHOLD_ADJUSTMENT_INCREMENT', '0.02')),
+            evaluation_window_hours=int(os.getenv('EVALUATION_WINDOW_HOURS', '24')),
+            max_adjustment_frequency_hours=int(os.getenv('MAX_ADJUSTMENT_FREQUENCY_HOURS', '6'))
+        )
+
+        logger.info("✓ Adaptive threshold manager initialized")
+
+        # Start continuous monitoring in background
+        import asyncio
+        app.state.threshold_monitoring_task = asyncio.create_task(
+            app.state.adaptive_threshold_manager.run_continuous_monitoring(
+                check_interval_minutes=int(os.getenv('THRESHOLD_CHECK_INTERVAL_MINUTES', '60'))
+            )
+        )
+    else:
+        app.state.adaptive_threshold_manager = None
+        logger.info("Adaptive thresholds disabled - using static thresholds")
+
     # Load ML model
     model_path = os.getenv('MODEL_PATH', './models/isolation_forest.pkl')
     app.state.scorer = AnomalyScorer(
         model_path=model_path,
-        threshold_suspicious=float(os.getenv('ANOMALY_THRESHOLD_SUSPICIOUS', '0.6')),
-        threshold_high=float(os.getenv('ANOMALY_THRESHOLD_HIGH', '0.8'))
+        threshold_suspicious=float(os.getenv('ANOMALY_THRESHOLD_SUSPICIOUS', '0.70')),
+        threshold_high=float(os.getenv('ANOMALY_THRESHOLD_HIGH', '0.85'))
     )
-    
+
     # Initialize agents
     app.state.feature_extractor = FeatureExtractor(
         window_size=int(os.getenv('FEATURE_WINDOW_SIZE', '60'))
     )
-    
+
     app.state.alerting_agent = AlertingAgent(
         throttle_seconds=int(os.getenv('ALERT_THROTTLE_SECONDS', '300')),
-        min_score_to_alert=float(os.getenv('ANOMALY_THRESHOLD_SUSPICIOUS', '0.6'))
+        min_score_to_alert=float(os.getenv('ANOMALY_THRESHOLD_SUSPICIOUS', '0.70'))
     )
-    
+
     app.state.response_agent = ResponseAgent(
         auto_response_enabled=os.getenv('ENABLE_AUTO_RESPONSE', 'false').lower() == 'true',
-        auto_block_threshold=float(os.getenv('ANOMALY_THRESHOLD_HIGH', '0.8')),
+        auto_block_threshold=float(os.getenv('ANOMALY_THRESHOLD_HIGH', '0.85')),
         require_manual_approval=True
     )
-    
+
     logger.info("Service initialized successfully")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down DNS Tunneling Detection Service")
+
+    # Cancel threshold monitoring if running
+    if adaptive_enabled and hasattr(app.state, 'threshold_monitoring_task'):
+        app.state.threshold_monitoring_task.cancel()
+        try:
+            await app.state.threshold_monitoring_task
+        except asyncio.CancelledError:
+            pass
 
 
 # Create FastAPI app
@@ -139,9 +178,24 @@ async def analyze_query(
             client_ip=request.client_ip,
             timestamp=request.timestamp or datetime.utcnow()
         )
-        
+
+        # Get current thresholds (adaptive or static)
+        if app.state.adaptive_threshold_manager:
+            threshold_suspicious, threshold_high = app.state.adaptive_threshold_manager.get_current_thresholds()
+            # Update scorer thresholds dynamically
+            app.state.scorer.threshold_suspicious = threshold_suspicious
+            app.state.scorer.threshold_high = threshold_high
+
         # Score query
         anomaly_score, severity = app.state.scorer.score(features)
+
+        # Record score in adaptive threshold manager
+        if app.state.adaptive_threshold_manager:
+            app.state.adaptive_threshold_manager.record_score(
+                score=anomaly_score,
+                severity=severity.value,
+                timestamp=request.timestamp or datetime.utcnow()
+            )
         
         # Store in database
         db_query = DNSQuery(
@@ -427,11 +481,165 @@ async def get_pending_approvals():
 async def approve_response(approval_id: int):
     """Approve a pending response action."""
     success = app.state.response_agent.approve_action(approval_id)
-    
+
     if not success:
         raise HTTPException(status_code=404, detail="Approval not found")
-    
+
     return {"status": "approved", "approval_id": approval_id}
+
+
+# Adaptive Thresholds & Feedback Endpoints
+
+@app.post("/api/v1/feedback", response_model=AlertFeedbackResponse, tags=["Adaptive Thresholds"])
+async def submit_alert_feedback(
+    feedback: AlertFeedbackRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Submit analyst feedback on an alert.
+
+    This feedback is used to adjust detection thresholds adaptively:
+    - False positives cause thresholds to increase (less sensitive)
+    - True positives cause thresholds to decrease (more sensitive)
+    """
+    # Get the alert
+    alert = db.query(Alert).filter(Alert.id == feedback.alert_id).first()
+
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    # Store feedback in database
+    db_feedback = AlertFeedback(
+        alert_id=feedback.alert_id,
+        is_false_positive=feedback.is_false_positive,
+        analyst=feedback.analyst,
+        notes=feedback.notes,
+        anomaly_score=alert.anomaly_score,
+        severity=alert.severity,
+        domain=alert.domain,
+        client_ip=alert.client_ip
+    )
+    db.add(db_feedback)
+    db.commit()
+    db.refresh(db_feedback)
+
+    # Record in adaptive threshold manager
+    if hasattr(app.state, 'adaptive_threshold_manager'):
+        app.state.adaptive_threshold_manager.add_feedback(
+            alert_id=feedback.alert_id,
+            is_false_positive=feedback.is_false_positive,
+            score=alert.anomaly_score,
+            analyst=feedback.analyst,
+            notes=feedback.notes
+        )
+
+        logger.info(
+            f"Feedback recorded: Alert {feedback.alert_id} marked as "
+            f"{'FALSE POSITIVE' if feedback.is_false_positive else 'TRUE POSITIVE'} "
+            f"by {feedback.analyst}"
+        )
+
+    return AlertFeedbackResponse.from_orm(db_feedback)
+
+
+@app.get("/api/v1/feedback", tags=["Adaptive Thresholds"])
+async def list_feedback(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    is_false_positive: Optional[bool] = None,
+    db: Session = Depends(get_db)
+):
+    """List analyst feedback with pagination and filtering."""
+    query = db.query(AlertFeedback)
+
+    # Apply filters
+    if is_false_positive is not None:
+        query = query.filter(AlertFeedback.is_false_positive == is_false_positive)
+
+    # Get total count
+    total = query.count()
+
+    # Paginate
+    offset = (page - 1) * page_size
+    feedback_list = query.order_by(desc(AlertFeedback.timestamp)).offset(offset).limit(page_size).all()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "feedback": [AlertFeedbackResponse.from_orm(f) for f in feedback_list]
+    }
+
+
+@app.get("/api/v1/thresholds/status", response_model=AdaptiveThresholdStatus, tags=["Adaptive Thresholds"])
+async def get_threshold_status():
+    """
+    Get current adaptive threshold status and performance metrics.
+
+    Returns:
+    - Current threshold values
+    - Performance metrics (FP rate, alert volume, etc.)
+    - Recent threshold adjustments
+    - Feedback summary
+    """
+    if not hasattr(app.state, 'adaptive_threshold_manager'):
+        raise HTTPException(
+            status_code=503,
+            detail="Adaptive thresholds not enabled"
+        )
+
+    stats = app.state.adaptive_threshold_manager.get_statistics()
+    return AdaptiveThresholdStatus(**stats)
+
+
+@app.post("/api/v1/thresholds/adjust", tags=["Adaptive Thresholds"])
+async def trigger_threshold_adjustment():
+    """
+    Manually trigger threshold adjustment evaluation.
+
+    Normally thresholds adjust automatically every few hours.
+    This endpoint allows manual triggering for testing or immediate adjustment.
+    """
+    if not hasattr(app.state, 'adaptive_threshold_manager'):
+        raise HTTPException(
+            status_code=503,
+            detail="Adaptive thresholds not enabled"
+        )
+
+    adjusted = await app.state.adaptive_threshold_manager.adjust_thresholds()
+
+    if adjusted:
+        thresholds = app.state.adaptive_threshold_manager.get_current_thresholds()
+        return {
+            "status": "adjusted",
+            "new_thresholds": {
+                "suspicious": thresholds[0],
+                "high": thresholds[1]
+            }
+        }
+    else:
+        return {
+            "status": "no_adjustment_needed",
+            "message": "Current thresholds are optimal"
+        }
+
+
+@app.get("/api/v1/thresholds/history", tags=["Adaptive Thresholds"])
+async def get_threshold_history():
+    """Get history of threshold adjustments."""
+    if not hasattr(app.state, 'adaptive_threshold_manager'):
+        raise HTTPException(
+            status_code=503,
+            detail="Adaptive thresholds not enabled"
+        )
+
+    stats = app.state.adaptive_threshold_manager.get_statistics()
+    return {
+        "adjustment_history": stats['recent_changes'],
+        "total_adjustments": stats['adjustment_stats']['total_adjustments'],
+        "increases": stats['adjustment_stats']['increases'],
+        "decreases": stats['adjustment_stats']['decreases']
+    }
 
 
 # Background tasks

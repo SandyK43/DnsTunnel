@@ -1,0 +1,239 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0.0, v1.2.3, etc.
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -match 'refs/tags/v(.*)') {
+            $version = $matches[1]
+          } elseif ($env:VERSION_INPUT) {
+            $version = $env:VERSION_INPUT
+          } else {
+            $version = "1.0.0"
+          }
+
+          Write-Host "Version: $version"
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          echo "TAG=$env:GITHUB_REF_NAME" >> $env:GITHUB_OUTPUT
+        env:
+          VERSION_INPUT: ${{ github.event.inputs.version }}
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup -y
+
+          # Add to PATH for this session
+          $innoPath = "C:\Program Files (x86)\Inno Setup 6"
+          echo "$innoPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Download NSSM
+        shell: pwsh
+        run: |
+          # Download NSSM
+          $nssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
+          $nssmZip = "nssm.zip"
+
+          Write-Host "Downloading NSSM..."
+          Invoke-WebRequest -Uri $nssmUrl -OutFile $nssmZip
+
+          # Extract
+          Expand-Archive -Path $nssmZip -DestinationPath "nssm-temp"
+
+          # Create target directory
+          New-Item -ItemType Directory -Path "installer\nssm" -Force
+
+          # Copy nssm.exe
+          Copy-Item "nssm-temp\nssm-2.24\win64\nssm.exe" "installer\nssm\nssm.exe"
+
+          # Verify
+          if (Test-Path "installer\nssm\nssm.exe") {
+            Write-Host "✓ NSSM downloaded successfully"
+          } else {
+            Write-Error "Failed to download NSSM"
+            exit 1
+          }
+
+          # Cleanup
+          Remove-Item $nssmZip
+          Remove-Item -Recurse "nssm-temp"
+
+      - name: Update version in InnoSetup script
+        shell: pwsh
+        run: |
+          $issFile = "installer\dns-tunnel-detection.iss"
+          $version = "${{ steps.version.outputs.VERSION }}"
+
+          Write-Host "Updating version to: $version"
+
+          # Read file
+          $content = Get-Content $issFile -Raw
+
+          # Replace version
+          $content = $content -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"$version`""
+
+          # Write back
+          $content | Set-Content $issFile -NoNewline
+
+          Write-Host "✓ Version updated in InnoSetup script"
+
+      - name: Create placeholder images (if not present)
+        shell: pwsh
+        run: |
+          # Create installer directory if needed
+          New-Item -ItemType Directory -Path "installer" -Force
+
+          # Check if INSTALL_INFO.txt exists, if not create placeholder
+          if (-not (Test-Path "installer\INSTALL_INFO.txt")) {
+            Write-Host "Creating placeholder INSTALL_INFO.txt"
+            @"
+DNS Tunnel Detection Service
+Enterprise-Grade Security Solution
+========================================
+
+System Requirements:
+- Windows 10+ or Server 2016+
+- Python 3.11 or higher
+- 2GB RAM minimum
+- Administrator privileges
+
+Installation will take approximately 3-5 minutes.
+"@ | Set-Content "installer\INSTALL_INFO.txt"
+          }
+
+      - name: Compile installer with Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          $issFile = "installer\dns-tunnel-detection.iss"
+
+          Write-Host "Compiling installer..."
+          Write-Host "InnoSetup: $iscc"
+          Write-Host "Script: $issFile"
+
+          # Compile
+          & $iscc $issFile
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Compilation failed with exit code: $LASTEXITCODE"
+            exit 1
+          }
+
+          Write-Host "✓ Compilation successful"
+
+      - name: Verify installer was created
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $installerPath = "installer\output\DNSTunnelDetection-Setup-$version.exe"
+
+          if (Test-Path $installerPath) {
+            $size = (Get-Item $installerPath).Length
+            $sizeMB = [math]::Round($size / 1MB, 2)
+
+            Write-Host "✓ Installer created successfully"
+            Write-Host "  Path: $installerPath"
+            Write-Host "  Size: $sizeMB MB"
+
+            # Set output for later steps
+            echo "INSTALLER_PATH=$installerPath" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Error "Installer not found at: $installerPath"
+            Get-ChildItem "installer\output" -Recurse
+            exit 1
+          }
+        id: verify
+
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $installerPath = "${{ steps.verify.outputs.INSTALLER_PATH }}"
+          $hash = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash
+
+          Write-Host "SHA256: $hash"
+
+          # Save to file
+          "$hash  $(Split-Path $installerPath -Leaf)" | Set-Content "installer\output\SHA256SUMS.txt"
+
+          echo "CHECKSUM=$hash" >> $env:GITHUB_OUTPUT
+        id: checksum
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            installer/output/DNSTunnelDetection-Setup-${{ steps.version.outputs.VERSION }}.exe
+            installer/output/SHA256SUMS.txt
+          body: |
+            ## DNS Tunnel Detection Service v${{ steps.version.outputs.VERSION }}
+
+            ### Download
+
+            **Windows Installer:** `DNSTunnelDetection-Setup-${{ steps.version.outputs.VERSION }}.exe`
+
+            **SHA256 Checksum:** `${{ steps.checksum.outputs.CHECKSUM }}`
+
+            ### Installation
+
+            1. **Prerequisites:**
+               - Python 3.11 or higher ([download](https://www.python.org/downloads/))
+               - Windows 10+ or Server 2016+
+               - Administrator privileges
+
+            2. **Install:**
+               - Run `DNSTunnelDetection-Setup-${{ steps.version.outputs.VERSION }}.exe` as Administrator
+               - Follow the configuration wizard
+               - Service starts automatically
+
+            3. **Verify:**
+               ```cmd
+               sc query DNSTunnelDetection
+               curl http://localhost:8000/api/v1/health
+               ```
+
+            ### What's New
+
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+
+            ### Documentation
+
+            - [Setup Guide](https://github.com/${{ github.repository }}/blob/main/SETUP_README.md)
+            - [API Documentation](http://localhost:8000/docs) (after installation)
+
+            ### Support
+
+            Report issues: [GitHub Issues](https://github.com/${{ github.repository }}/issues)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DNSTunnelDetection-Setup-${{ steps.version.outputs.VERSION }}
+          path: |
+            installer/output/DNSTunnelDetection-Setup-${{ steps.version.outputs.VERSION }}.exe
+            installer/output/SHA256SUMS.txt
+          retention-days: 90
