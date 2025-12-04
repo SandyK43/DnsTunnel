@@ -49,7 +49,7 @@ MinVersion=10.0.17763
 ; SignTool=signtool.exe sign /f "$env:CERT_FILE" /p "$env:CERT_PASSWORD" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f
 ; Note: SignTool is optional. If not configured, installer will build without signing.
 ; The $f is replaced by InnoSetup with the file to be signed
-SignedUninstaller=yes
+; SignedUninstaller=yes  ; Uncomment this when you have a code signing certificate configured
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
