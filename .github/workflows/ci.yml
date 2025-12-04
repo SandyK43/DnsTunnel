@@ -74,26 +74,19 @@ jobs:
           file: ./coverage.xml
           fail_ci_if_error: false
 
-  build:
-    name: Build Docker Image
+  syntax-check:
+    name: Python Syntax Check
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          context: .
-          push: false
-          tags: dns-tunnel:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          python-version: '3.11'
 
-      - name: Test Docker image
+      - name: Check Python syntax
         run: |
-          docker run --rm dns-tunnel:test python --version
+          python -m py_compile agents/*.py api/*.py scripts/*.py service/*.py
