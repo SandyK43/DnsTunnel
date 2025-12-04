@@ -141,7 +141,7 @@ end;
 procedure InitializeWizard;
 begin
   // Database selection page
-  DatabasePage := CreateInputOptionWizardPage(wpSelectComponents,
+  DatabasePage := CreateInputOptionPage(wpSelectComponents,
     'Database Configuration', 'Choose your database backend',
     'Select which database to use for storing DNS queries and alerts.',
     True, False);
@@ -150,7 +150,7 @@ begin
   DatabasePage.Values[0] := True;
 
   // Detection thresholds page
-  ThresholdPage := CreateInputQueryWizardPage(DatabasePage.ID,
+  ThresholdPage := CreateInputQueryPage(DatabasePage.ID,
     'Detection Configuration', 'Configure detection sensitivity',
     'Set thresholds for alert triggering. Lower values = more sensitive.');
   ThresholdPage.Add('Suspicious threshold (0.0-1.0):', False);
@@ -159,7 +159,7 @@ begin
   ThresholdPage.Values[1] := '0.85';
 
   // Alerting configuration page
-  AlertingPage := CreateInputQueryWizardPage(ThresholdPage.ID,
+  AlertingPage := CreateInputQueryPage(ThresholdPage.ID,
     'Alerting Configuration', 'Configure alert notifications',
     'Enter webhook URLs and email settings for receiving alerts.');
   AlertingPage.Add('Slack webhook URL (optional):', False);
@@ -170,7 +170,7 @@ begin
   AlertingPage.Values[2] := 'smtp.gmail.com';
 
   // API configuration page
-  ConfigPage := CreateInputQueryWizardPage(AlertingPage.ID,
+  ConfigPage := CreateInputQueryPage(AlertingPage.ID,
     'API Configuration', 'Configure REST API settings',
     'Set the host and port for the REST API endpoint.');
   ConfigPage.Add('API Host:', False);
