@@ -105,19 +105,8 @@ jobs:
           # Check if INSTALL_INFO.txt exists, if not create placeholder
           if (-not (Test-Path "installer\INSTALL_INFO.txt")) {
             Write-Host "Creating placeholder INSTALL_INFO.txt"
-            @"
-DNS Tunnel Detection Service
-Enterprise-Grade Security Solution
-========================================
-
-System Requirements:
-- Windows 10+ or Server 2016+
-- Python 3.11 or higher
-- 2GB RAM minimum
-- Administrator privileges
-
-Installation will take approximately 3-5 minutes.
-"@ | Set-Content "installer\INSTALL_INFO.txt"
+            $content = "DNS Tunnel Detection Service`nEnterprise-Grade Security Solution`n========================================`n`nSystem Requirements:`n- Windows 10+ or Server 2016+`n- Python 3.11 or higher`n- 2GB RAM minimum`n- Administrator privileges`n`nInstallation will take approximately 3-5 minutes."
+            $content | Set-Content "installer\INSTALL_INFO.txt"
           }
 
       - name: Compile installer with Inno Setup
