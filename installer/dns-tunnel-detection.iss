@@ -39,6 +39,18 @@ PrivilegesRequired=admin
 ; Minimum Windows version
 MinVersion=10.0.17763
 
+; Code Signing Configuration
+; Uncomment and configure based on your signing method:
+; Method 1: Certificate file (.pfx)
+; SignTool=signtool.exe sign /f "path\to\certificate.pfx" /p "password" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f
+; Method 2: Certificate from Windows Certificate Store
+; SignTool=signtool.exe sign /n "Your Certificate Name" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f
+; Method 3: Environment variable for automated builds
+; SignTool=signtool.exe sign /f "$env:CERT_FILE" /p "$env:CERT_PASSWORD" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f
+; Note: SignTool is optional. If not configured, installer will build without signing.
+; The $f is replaced by InnoSetup with the file to be signed
+SignedUninstaller=yes
+
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
@@ -109,6 +121,37 @@ var
 
   PythonPath: String;
   PythonVersion: String;
+  PythonCommand: String;
+
+{ Find the best Python command to use }
+function GetPythonCommand(): String;
+var
+  ResultCode: Integer;
+begin
+  // Try py launcher first (Windows Python launcher - finds latest version)
+  if Exec('cmd.exe', '/c py --version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    Result := 'py';
+    Log('Using py launcher');
+  end
+  // Try python command
+  else if Exec('cmd.exe', '/c python --version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    Result := 'python';
+    Log('Using python command');
+  end
+  // Try python3 command
+  else if Exec('cmd.exe', '/c python3 --version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    Result := 'python3';
+    Log('Using python3 command');
+  end
+  else
+  begin
+    Result := 'python';  // Default fallback
+    Log('No Python found, using default: python');
+  end;
+end;
 
 { Check if Python is installed and meets minimum version requirement }
 function CheckPython(): Boolean;
@@ -124,16 +167,24 @@ begin
     if ResultCode = 0 then
     begin
       Result := True;
-      Log('Python found and version is acceptable');
+      PythonCommand := GetPythonCommand();
+      Log('Python found and version is acceptable, using: ' + PythonCommand);
     end
     else
     begin
       Log('Python not found or version too old');
-      MsgBox('Python 3.11 or higher is required but not found.' + #13#10 + #13#10 +
-             'Please install Python from https://www.python.org/downloads/' + #13#10 +
+      MsgBox('Python 3.11 or higher is required but not found or too old.' + #13#10 + #13#10 +
+             'Please install/upgrade Python from https://www.python.org/downloads/' + #13#10 +
              'Make sure to check "Add Python to PATH" during installation.',
              mbError, MB_OK);
     end;
+  end
+  else
+  begin
+    Log('Failed to execute PowerShell check script');
+    MsgBox('Failed to check Python installation.' + #13#10 + #13#10 +
+           'Please ensure PowerShell is available and Python 3.11+ is installed.',
+           mbError, MB_OK);
   end;
 end;
 
@@ -356,7 +407,8 @@ var
 begin
   Result := False;
 
-  PipCommand := 'python -m pip install -r "' + ExpandConstant('{app}\requirements.txt') + '"';
+  PipCommand := PythonCommand + ' -m pip install -r "' + ExpandConstant('{app}\requirements.txt') + '"';
+  Log('Installing dependencies with command: ' + PipCommand);
 
   if Exec('cmd.exe', '/c ' + PipCommand, ExpandConstant('{app}'), SW_SHOW, ewWaitUntilTerminated, ResultCode) then
   begin
@@ -369,7 +421,7 @@ begin
     begin
       Log('Failed to install dependencies, exit code: ' + IntToStr(ResultCode));
       MsgBox('Failed to install Python dependencies. Please run manually:' + #13#10 +
-             'pip install -r requirements.txt', mbError, MB_OK);
+             PythonCommand + ' -m pip install -r requirements.txt', mbError, MB_OK);
     end;
   end;
 end;
@@ -382,7 +434,8 @@ var
 begin
   Result := False;
 
-  TrainCommand := 'python "' + ExpandConstant('{app}\scripts\train_model.py') + '" --format sample --num-samples 5000';
+  TrainCommand := PythonCommand + ' "' + ExpandConstant('{app}\scripts\train_model.py') + '" --format sample --num-samples 5000';
+  Log('Training model with command: ' + TrainCommand);
 
   if Exec('cmd.exe', '/c ' + TrainCommand, ExpandConstant('{app}'), SW_SHOW, ewWaitUntilTerminated, ResultCode) then
   begin
@@ -404,20 +457,37 @@ end;
 function InstallService(): Boolean;
 var
   ResultCode: Integer;
-  NSSMPath, PythonExe, ServiceScript: String;
+  NSSMPath, PythonExe, ServiceScript, WhereCmd: String;
+  TempFile: String;
 begin
   Result := False;
 
   NSSMPath := ExpandConstant('{app}\bin\nssm.exe');
   ServiceScript := ExpandConstant('{app}\service\dns_tunnel_service.py');
 
-  // Find Python executable
-  if Exec('cmd.exe', '/c where python', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  // Find Python executable full path
+  // Use where command to find the actual executable path
+  WhereCmd := 'where ' + PythonCommand;
+  Log('Finding Python executable with: ' + WhereCmd);
+
+  if Exec('cmd.exe', '/c ' + WhereCmd, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
   begin
-    PythonExe := 'python'; // Use python from PATH
+    // For 'py' launcher, we need to use 'py.exe' full path
+    if PythonCommand = 'py' then
+      PythonExe := 'py'
+    else
+      PythonExe := PythonCommand;
+
+    Log('Using Python executable: ' + PythonExe);
+  end
+  else
+  begin
+    PythonExe := PythonCommand; // Fallback to command name
+    Log('Using fallback Python command: ' + PythonExe);
   end;
 
   // Install service
+  Log('Installing service with NSSM: ' + NSSMPath);
   if Exec(NSSMPath, 'install {#MyAppServiceName} "' + PythonExe + '" "' + ServiceScript + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
     if ResultCode = 0 then
