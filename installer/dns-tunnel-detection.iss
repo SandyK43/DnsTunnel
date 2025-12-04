@@ -69,11 +69,7 @@ Source: "..\demo\*"; DestDir: "{app}\demo"; Flags: ignoreversion recursesubdirs;
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion; Components: docs
 Source: "..\SETUP_README.md"; DestDir: "{app}"; Flags: ignoreversion; Components: docs
 
-; Data directories (create empty)
-Source: "..\models\.gitkeep"; DestDir: "{app}\models"; Flags: ignoreversion; Components: core
-Source: "..\data\.gitkeep"; DestDir: "{app}\data"; Flags: ignoreversion; Components: core
-Source: "..\logs\.gitkeep"; DestDir: "{app}\logs"; Flags: ignoreversion; Components: core
-Source: "..\reports\.gitkeep"; DestDir: "{app}\reports"; Flags: ignoreversion; Components: core
+; Note: Data directories are created via [Dirs] section below (no files needed)
 
 ; Installer helper scripts
 Source: "..\installer\scripts\check_python.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall

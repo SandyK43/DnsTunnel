@@ -11,10 +11,10 @@ from agents.feature_extractor import FeatureExtractor
 def test_scorer_initialization():
     """Test scorer initialization."""
     scorer = AnomalyScorer()
-    
+
     assert scorer.model is not None
-    assert scorer.threshold_suspicious == 0.6
-    assert scorer.threshold_high == 0.8
+    assert scorer.threshold_suspicious == 0.7
+    assert scorer.threshold_high == 0.85
 
 
 def test_model_training():
